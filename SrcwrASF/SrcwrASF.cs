@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Plugins.Interfaces;
@@ -19,7 +20,9 @@ internal sealed class BotSettings {
 }
 
 public class ResponseFriend {
+	[JsonInclude]
 	public string SteamID64 { get; set; } = "";
+	[JsonInclude]
 	public string Name { get; set; } = "";
 }
 
@@ -98,27 +101,13 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 		}
 		string command = args[0].ToUpperInvariant();
 		if (command == "GETPERSONANAME") {
+#pragma warning disable IDE0046 // Convert to conditional expression
 			if (args.Length != 2) {
 				return null;
 			}
-			SteamID target = Convert.ToUInt64(args[1], CultureInfo.InvariantCulture);
-			if (target.AccountType != EAccountType.Individual) {
-				return null;
-			}
-			string? personaname = bot.SteamFriends.GetFriendPersonaName(target);
-			if (personaname == null) {
-				TaskCompletionSource<bool> tcs = new();
-				if (PersonaNameInquirers.TryGetValue(target, out ConcurrentBag<TaskCompletionSource<bool>>? inquirers)) {
-					inquirers.Add(tcs);
-				} else {
-					PersonaNameInquirers[target] = [tcs];
-				}
-				bot.SteamFriends.RequestFriendInfo(target, EClientPersonaStateFlag.PlayerName);
-				if (await Task.WhenAny(tcs.Task, Task.Delay(3000)).ConfigureAwait(false) == tcs.Task) {
-					personaname = bot.SteamFriends.GetFriendPersonaName(target);
-				}
-			}
-			return personaname ?? "";
+#pragma warning restore IDE0046 // Convert to conditional expression
+			string? personaname = await GetPersonaName(bot, Convert.ToUInt64(args[1], CultureInfo.InvariantCulture)).ConfigureAwait(false);
+			return personaname == null ? "Failed to get persona name!" : "Persona name: " + personaname;
 		} else if (command == "GETSTEAMNICKNAMES") {
 			List<ResponseFriend> friends = [];
 			foreach (ulong steamid in NicknameCache[bot].Keys) {
@@ -142,17 +131,42 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 #pragma warning restore IDE0046 // Convert to conditional expression
 			return await SetPlayerNickName(bot, target, args.Length == 2 ? "" : args[2]).ConfigureAwait(false) ? "success!" : "failed!";
 		} else if (command == "GETFRIENDSLIST") {
-			List<string> friends = [];
-			for (int i = 0, friend_count = bot.SteamFriends.GetFriendCount(); i < friend_count; i++) {
-				SteamID friendID = bot.SteamFriends.GetFriendByIndex(i);
-				if (friendID.AccountType != EAccountType.Individual) {
-					continue;
-				}
-				friends.Add(friendID.ConvertToUInt64().ToString(CultureInfo.InvariantCulture));
-			}
-			return JsonSerializer.Serialize(friends);
+			return JsonSerializer.Serialize(GetFriendsList(bot));
 		}
 		return null;
+	}
+	public static List<string> GetFriendsList(Bot bot) {
+		List<string> friends = [];
+		for (int i = 0, friend_count = bot.SteamFriends.GetFriendCount(); i < friend_count; i++) {
+			SteamID friendID = bot.SteamFriends.GetFriendByIndex(i);
+			if (friendID.AccountType != EAccountType.Individual) {
+				continue;
+			}
+			friends.Add(friendID.ConvertToUInt64().ToString(CultureInfo.InvariantCulture));
+		}
+		return friends;
+	}
+	public static async Task<string?> GetPersonaName(Bot bot, SteamID target) {
+		if (target.AccountType != EAccountType.Individual) {
+			return null;
+		}
+		string? personaname = bot.SteamFriends.GetFriendPersonaName(target);
+		//bot.ArchiLogger.LogGenericInfo("personaname = " + personaname ?? "");
+		if (personaname == null) {
+			TaskCompletionSource<bool> tcs = new();
+			if (PersonaNameInquirers.TryGetValue(target, out ConcurrentBag<TaskCompletionSource<bool>>? inquirers)) {
+				inquirers.Add(tcs);
+			} else {
+				PersonaNameInquirers[target] = [tcs];
+			}
+			bot.SteamFriends.RequestFriendInfo(target, EClientPersonaStateFlag.PlayerName);
+			if (await Task.WhenAny(tcs.Task, Task.Delay(3000)).ConfigureAwait(false) == tcs.Task) {
+				//bot.ArchiLogger.LogGenericInfo("fetched name!");
+				personaname = bot.SteamFriends.GetFriendPersonaName(target);
+			}
+		}
+		return personaname;
+		//return JsonSerializer.Serialize(new ResponseFriend { SteamID64 = target.ConvertToUInt64().ToString(CultureInfo.InvariantCulture), Name = personaname ?? "" });
 	}
 	public static async Task<bool> SetPlayerNickName(Bot bot, SteamID steamID, string nickname) {
 		if (NicknameCache[bot].TryGetValue(steamID, out string? cached_nickname)) {
