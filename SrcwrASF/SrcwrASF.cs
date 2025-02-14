@@ -19,7 +19,7 @@ internal sealed class BotSettings {
 	public bool SendThings;
 }
 
-public class ResponseFriend {
+public class ResponsePlayer {
 	[JsonInclude]
 	public string SteamID64 { get; set; } = "";
 	[JsonInclude]
@@ -35,9 +35,16 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 
 	internal static ConcurrentDictionary<Bot, ConcurrentDictionary<ulong, string>> NicknameCache = new();
 	internal static ConcurrentDictionary<Bot, NicknameHandler> NicknameHandlers = new();
+
 	internal static ConcurrentDictionary<Bot, List<IDisposable>> CallbackSubscriptions = new();
+
 	internal static ConcurrentDictionary<Bot, BotSettings> Settings = new();
+
 	internal static ConcurrentDictionary<ulong, ConcurrentBag<TaskCompletionSource<bool>>> PersonaNameInquirers = new();
+
+	internal static ConcurrentDictionary<ulong, string> QueuedPersonaNames = new();
+	internal static System.Threading.Lock QueuedPersonaNamesSubmitLock = new();
+	internal static bool QueuedPersonaNamesSubmit;
 
 	public Task OnLoaded() {
 		ASF.ArchiLogger.LogGenericInfo($"Hello {Name}!");
@@ -109,10 +116,10 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 			string? personaname = await GetPersonaName(bot, Convert.ToUInt64(args[1], CultureInfo.InvariantCulture)).ConfigureAwait(false);
 			return personaname == null ? "Failed to get persona name!" : "Persona name: " + personaname;
 		} else if (command == "GETSTEAMNICKNAMES") {
-			List<ResponseFriend> friends = [];
+			List<ResponsePlayer> friends = [];
 			foreach (ulong steamid in NicknameCache[bot].Keys) {
 				if (NicknameCache[bot].TryGetValue(steamid, out string? nickname)) {
-					friends.Add(new ResponseFriend {
+					friends.Add(new ResponsePlayer {
 						SteamID64 = steamid.ToString(CultureInfo.InvariantCulture),
 						Name = nickname,
 					});
@@ -254,18 +261,40 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 		bot.ArchiLogger.LogGenericInfo(s);
 		*/
 	}
+	private static async Task DelayedPersonaNameSubmit() {
+		await Task.Delay(3000).ConfigureAwait(false);
+		List<ResponsePlayer> players = [];
+		lock (QueuedPersonaNamesSubmitLock) {
+			QueuedPersonaNamesSubmit = false;
+			List<ulong> steamid64s = [.. QueuedPersonaNames.Keys];
+			foreach (ulong steamid64 in steamid64s) {
+				if (QueuedPersonaNames.TryRemove(steamid64, out string? personaname)) {
+					players.Add(new ResponsePlayer { SteamID64 = steamid64.ToString(CultureInfo.InvariantCulture), Name = personaname });
+				}
+			}
+		}
+		ASF.ArchiLogger.LogGenericInfo(JsonSerializer.Serialize(players));
+		// TODO: http request to srcwr api endpoint
+	}
 	private static void OnPersonaState(SteamFriends.PersonaStateCallback callback, Bot bot) {
 		if (callback.FriendID.AccountType != EAccountType.Individual) {
 			return;
 		}
-		bot.ArchiLogger.LogGenericInfo("State change (" + callback.State.ToString() + ") (" + /*callback.StateFlags.ToString() + " " + callback.StatusFlags.ToString() +*/ "): " + callback.Name);
+		//bot.ArchiLogger.LogGenericInfo("State change (" + callback.State.ToString() + ") (" + /*callback.StateFlags.ToString() + " " + callback.StatusFlags.ToString() +*/ "): " + callback.Name);
 		if (PersonaNameInquirers.TryGetValue(callback.FriendID, out ConcurrentBag<TaskCompletionSource<bool>>? inquirers)) {
 			while (inquirers.TryTake(out TaskCompletionSource<bool>? inquirer)) {
 				inquirer.SetResult(true);
 			}
 		}
-		//if (Settings[bot.BotName].SendThings) {
-		//}
+		if (Settings[bot].SendThings) {
+			QueuedPersonaNames[callback.FriendID] = callback.Name;
+			lock (QueuedPersonaNamesSubmitLock) {
+				if (!QueuedPersonaNamesSubmit) {
+					QueuedPersonaNamesSubmit = true;
+					_ = DelayedPersonaNameSubmit();
+				}
+			}
+		}
 	}
 	// IBotSteamClient
 	public Task<IReadOnlyCollection<ClientMsgHandler>?> OnBotSteamHandlersInit(Bot bot) {

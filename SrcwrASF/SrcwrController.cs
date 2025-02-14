@@ -17,9 +17,9 @@ public sealed class SrcwrController : ArchiController {
 	// test with (currently) non-existent Steam user 76561199960265727 / [U:1:1999999999]
 	[EndpointSummary("Returns a Steam user's persona name (and caches it). Name can be an empty string if the fetch failed.")]
 	[HttpGet("{botName:required}/GetPersonaName/{steamID64:required}")]
-	[ProducesResponseType<GenericResponse<ResponseFriend>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse<ResponsePlayer>>((int) HttpStatusCode.OK)]
 	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
-	public async Task<ActionResult<ResponseFriend>> GetPersonaName(string botName, string steamID64) {
+	public async Task<ActionResult<ResponsePlayer>> GetPersonaName(string botName, string steamID64) {
 		Bot? bot = Bot.GetBot(botName);
 		if (bot == null) {
 			return BadRequest(new GenericResponse(false, "Only pass one bot name please... or bot not found..."));
@@ -31,7 +31,7 @@ public sealed class SrcwrController : ArchiController {
 			return BadRequest(new GenericResponse(false, "Invalid steamid64"));
 		}
 		string? personaname = await SrcwrASF.GetPersonaName(bot, target).ConfigureAwait(false);
-		return Ok(new ResponseFriend {
+		return Ok(new ResponsePlayer {
 			SteamID64 = target.ConvertToUInt64().ToString(CultureInfo.InvariantCulture),
 			Name = personaname ?? "",
 		});
