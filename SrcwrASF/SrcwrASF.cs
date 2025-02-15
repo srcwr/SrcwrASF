@@ -28,7 +28,7 @@ public class ResponsePlayer {
 
 #pragma warning disable CA1812 // ASF uses this class during runtime
 [UsedImplicitly]
-internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, IBotMessage, IBotCommand2, IBotSteamClient, IBotModules {
+internal sealed class SrcwrASF : IGitHubPluginUpdates, IASF, IBot, IBotFriendRequest, IBotMessage, IBotCommand2, IBotSteamClient, IBotModules {
 	public string Name => nameof(SrcwrASF);
 	public string RepositoryName => "srcwr/SrcwrASF";
 	public Version Version => typeof(SrcwrASF).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
@@ -42,12 +42,15 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 
 	internal static ConcurrentDictionary<ulong, ConcurrentBag<TaskCompletionSource<bool>>> PersonaNameInquirers = new();
 
-	internal static ConcurrentDictionary<ulong, string> QueuedPersonaNames = new();
-	internal static System.Threading.Lock QueuedPersonaNamesSubmitLock = new();
-	internal static bool QueuedPersonaNamesSubmit;
-
 	public Task OnLoaded() {
 		ASF.ArchiLogger.LogGenericInfo($"Hello {Name}!");
+		return Task.CompletedTask;
+	}
+
+	// IASF
+	public Task OnASFInit(IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null) {
+		// TODO: Is this where we want to read a secret-key / auth-token for the submissions API?
+		//       Environment variables maybe?
 		return Task.CompletedTask;
 	}
 
@@ -218,6 +221,7 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 			}
 
 			if (friend.Relationship == EFriendRelationship.RequestRecipient) {
+				// TODO: make a timer that rechecks for any friend-requests and accepts them
 				bot.ArchiLogger.LogGenericInfo("Found friend request from " + friend.SteamID.Render(true));
 				if (accept_all_friend_requests) {
 					bot.SteamFriends.AddFriend(friend.SteamID);
@@ -261,21 +265,6 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 		bot.ArchiLogger.LogGenericInfo(s);
 		*/
 	}
-	private static async Task DelayedPersonaNameSubmit() {
-		await Task.Delay(3000).ConfigureAwait(false);
-		List<ResponsePlayer> players = [];
-		lock (QueuedPersonaNamesSubmitLock) {
-			QueuedPersonaNamesSubmit = false;
-			List<ulong> steamid64s = [.. QueuedPersonaNames.Keys];
-			foreach (ulong steamid64 in steamid64s) {
-				if (QueuedPersonaNames.TryRemove(steamid64, out string? personaname)) {
-					players.Add(new ResponsePlayer { SteamID64 = steamid64.ToString(CultureInfo.InvariantCulture), Name = personaname });
-				}
-			}
-		}
-		ASF.ArchiLogger.LogGenericInfo(JsonSerializer.Serialize(players));
-		// TODO: http request to srcwr api endpoint
-	}
 	private static void OnPersonaState(SteamFriends.PersonaStateCallback callback, Bot bot) {
 		if (callback.FriendID.AccountType != EAccountType.Individual) {
 			return;
@@ -287,13 +276,7 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IBot, IBotFriendRequest, 
 			}
 		}
 		if (Settings[bot].SendThings) {
-			QueuedPersonaNames[callback.FriendID] = callback.Name;
-			lock (QueuedPersonaNamesSubmitLock) {
-				if (!QueuedPersonaNamesSubmit) {
-					QueuedPersonaNamesSubmit = true;
-					_ = DelayedPersonaNameSubmit();
-				}
-			}
+			SrcwrWebAPI.SendPersonaName(callback.FriendID, callback.Name);
 		}
 	}
 	// IBotSteamClient

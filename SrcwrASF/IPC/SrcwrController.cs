@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SteamKit2;
 
-namespace SrcwrASF;
+namespace SrcwrASF.IPC;
 
 [Route("/Api/Srcwr")]
 public sealed class SrcwrController : ArchiController {
