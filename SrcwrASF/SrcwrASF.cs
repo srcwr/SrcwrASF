@@ -170,7 +170,7 @@ internal sealed class SrcwrASF : IGitHubPluginUpdates, IASF, IBot, IBotFriendReq
 				PersonaNameInquirers[target] = [tcs];
 			}
 			bot.SteamFriends.RequestFriendInfo(target, EClientPersonaStateFlag.PlayerName);
-			if (await Task.WhenAny(tcs.Task, Task.Delay(3000)).ConfigureAwait(false) == tcs.Task) {
+			if (await Task.WhenAny(tcs.Task, Task.Delay(10000)).ConfigureAwait(false) == tcs.Task) {
 				//bot.ArchiLogger.LogGenericInfo("fetched name!");
 				personaname = bot.SteamFriends.GetFriendPersonaName(target);
 			}
